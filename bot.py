@@ -128,24 +128,30 @@ def generate_game_field(rows=1):
         field.append(row)
     return field
 
-def format_game_field(field, current_row, total_rows):
-    """O'yin maydonini matn ko'rinishiga o'tkazish"""
+def format_game_field(field, current_row, total_rows, direction="up"):
+    """O'yin maydonini matn ko'rinishiga o'tkazish - pastdan tepaga"""
     result = "🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
     
-    # Qatorlarni chiroyli ko'rsatish
-    for i, row in enumerate(field):
+    # Qatorlarni teskari tartibda ko'rsatish (pastdan tepaga)
+    # Eng pastki qator birinchi bo'lib ko'rsatiladi
+    for i in range(len(field)-1, -1, -1):
+        row = field[i]
+        row_number = i + 1
         row_text = " ".join(row)
+        
         # Butun olmani belgilash (🍎)
         if "🍎" in row:
             # Butun olma qaysi pozitsiyada ekanligini topish
             pos = row.index("🍎") + 1
-            result += f"`{row_text}`  👈 Butun olma {i+1}-qator, {pos}-katakda\n"
+            result += f"`{row_text}`  👈 Butun olma {row_number}-qator, {pos}-katakda\n"
         else:
             result += f"`{row_text}`\n"
     
+    # Yo'nalishni ko'rsatish
     result += f"\n📊 *Qatorlar:* {current_row}/{total_rows}\n"
+    result += f"📈 *Yo'nalish:* Pastdan tepaga ⬆️\n"
     result += "\n🎯 *Betwinner Apple of Fortune o'yiniga kiring*"
-    result += "\n📌 *Ko'rsatilgan qatorlar bo'yicha yuring*"
+    result += "\n📌 *Ko'rsatilgan qatorlar bo'yicha pastdan yuqoriga yuring*"
     result += "\n\n⚡️ Keyingi qatorni ochish uchun tugmani bosing!"
     
     return result
@@ -307,7 +313,7 @@ def main_menu_keyboard():
 def game_control_keyboard():
     """O'yin boshqaruvi"""
     kb = InlineKeyboardBuilder()
-    kb.button(text="🔄 Keyingi qator", callback_data="next_row")
+    kb.button(text="⬆️ Keyingi qator (tepaga)", callback_data="next_row")
     kb.button(text="⏹️ O'yinni tugatish", callback_data="end_game")
     kb.button(text="🏠 Asosiy menyu", callback_data="main_menu")
     kb.adjust(1, 2)
@@ -469,7 +475,8 @@ async def get_signal(callback: types.CallbackQuery, state: FSMContext):
             f"🎫 Iltimos, Betwinner ID raqamingizni kiriting:\n\n"
             f"🔢 Raqam 9 dan 12 gacha xonadan iborat bo'lishi kerak.\n\n"
             f"💳 Signal narxi: {SIGNAL_PRICE} ball\n"
-            f"💼 Sizning balansingiz: {format_balance_message(balance)}",
+            f"💼 Sizning balansingiz: {format_balance_message(balance)}\n\n"
+            f"📈 *Yo'nalish:* Pastdan tepaga ⬆️",
             parse_mode="Markdown",
             reply_markup=back_button()
         )
@@ -493,7 +500,7 @@ async def check_balance(callback: types.CallbackQuery):
         text += f"💳 Joriy balans: {format_balance_message(user[4])}\n"
         text += f"📊 Jami signallar: {user[5]}\n\n"
         text += f"⚡️ 1 signal narxi: {SIGNAL_PRICE} ball\n"
-        text += f"👥 1 referal bonusi: +{REFERRAL_BALANCE} ball"
+        text += f"👥 1 referal bonusi: +{REFERRAL_BONUS} ball"
         
         await callback.message.edit_text(
             text,
@@ -588,6 +595,8 @@ async def help_menu(callback: types.CallbackQuery):
     text += f"• Yangi foydalanuvchilarga {START_BALANCE} ball beriladi\n"
     text += f"• 1 signal narxi: {SIGNAL_PRICE} ball\n"
     text += f"• Referal taklif: +{REFERRAL_BONUS} ball\n\n"
+    text += "📈 *Yo'nalish:* Pastdan tepaga ⬆️\n"
+    text += "   Qatorlar pastdan yuqoriga qarab ochiladi\n\n"
     text += "📝 *Promokod:* SIGNAL7\n"
     text += "   • APK yuklash huquqi\n"
     text += "   • Referalga +500 ball\n\n"
@@ -625,7 +634,8 @@ async def process_bet_id(message: types.Message, state: FSMContext):
         
         text = f"✅ Betwinner ID qabul qilindi: `{bet_id}`\n\n"
         text += f"💰 Signal narxi: {SIGNAL_PRICE} ball\n"
-        text += f"💳 Balansingiz: {format_balance_message(user[4])}\n\n"
+        text += f"💳 Balansingiz: {format_balance_message(user[4])}\n"
+        text += f"📈 Yo'nalish: Pastdan tepaga ⬆️\n\n"
         text += "🎮 O'yinni boshlash uchun tugmani bosing!"
         
         kb = InlineKeyboardBuilder()
@@ -684,10 +694,10 @@ async def start_game(callback: types.CallbackQuery, state: FSMContext):
     game_field = generate_game_field(rows=1)
     await state.update_data(game_field=game_field, current_row=1, max_rows=6)
     
-    # Signal matni
+    # Signal matni - pastdan tepaga
     signal_text = f"🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
     signal_text += f"🎫 Betwinner ID: `{data.get('bet_id')}`\n\n"
-    signal_text += format_game_field(game_field, 1, 6)
+    signal_text += format_game_field(game_field, 1, 6, direction="up")
     
     await callback.message.edit_text(
         signal_text,
@@ -711,15 +721,15 @@ async def next_row(callback: types.CallbackQuery, state: FSMContext):
         current_row += 1
         await state.update_data(current_row=current_row)
         
-        # Yangi qator qo'shish
+        # Yangi qator qo'shish (pastga qo'shiladi)
         new_row = generate_game_row()
-        game_field.append(new_row)
+        game_field.append(new_row)  # Yangi qator listning oxiriga qo'shiladi (pastki qator)
         await state.update_data(game_field=game_field)
         
-        # Signal matni
+        # Signal matni - pastdan tepaga ko'rsatish
         signal_text = f"🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
         signal_text += f"🎫 Betwinner ID: `{bet_id}`\n\n"
-        signal_text += format_game_field(game_field, current_row, max_rows)
+        signal_text += format_game_field(game_field, current_row, max_rows, direction="up")
         
         await callback.message.edit_text(
             signal_text,
@@ -730,7 +740,7 @@ async def next_row(callback: types.CallbackQuery, state: FSMContext):
         # O'yin tugadi - 6 qator
         signal_text = f"🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
         signal_text += f"🎫 Betwinner ID: `{bet_id}`\n\n"
-        signal_text += format_game_field(game_field, current_row, max_rows)
+        signal_text += format_game_field(game_field, current_row, max_rows, direction="up")
         signal_text += "\n\n🎉 *O'YIN TUGADI!* 🎉\n"
         signal_text += "💰 Yutuqni olish uchun Betwinner'ga kiring!\n\n"
         signal_text += "🔄 Qayta boshlash uchun tugmani bosing."
@@ -775,10 +785,10 @@ async def restart_game(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(game_field=game_field, current_row=1, max_rows=6)
     await state.set_state(SignalStates.waiting_for_game_continue)
     
-    # Signal matni
+    # Signal matni - pastdan tepaga
     signal_text = f"🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
     signal_text += f"🎫 Betwinner ID: `{bet_id}`\n\n"
-    signal_text += format_game_field(game_field, 1, 6)
+    signal_text += format_game_field(game_field, 1, 6, direction="up")
     
     await callback.message.edit_text(
         signal_text,
@@ -991,7 +1001,8 @@ async def on_startup():
                 f"✅ *Bot ishga tushdi!*\n\n"
                 f"💰 Boshlang'ich balans: {START_BALANCE} ball\n"
                 f"🎫 Signal narxi: {SIGNAL_PRICE} ball\n"
-                f"👥 Referal bonusi: +{REFERRAL_BONUS} ball",
+                f"👥 Referal bonusi: +{REFERRAL_BONUS} ball\n"
+                f"📈 Yo'nalish: Pastdan tepaga ⬆️",
                 parse_mode="Markdown"
             )
         except:
