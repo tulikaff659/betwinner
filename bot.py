@@ -115,27 +115,39 @@ class AdminStates(StatesGroup):
 # ============= YORDAMCHI FUNKSIYALAR =============
 def generate_game_row():
     """Random olma qatorini yaratish"""
+    # 4 ta sirli (❓) va 1 ta butun olma (🍎)
     apples = ["❓", "❓", "❓", "❓", "🍎"]
     random.shuffle(apples)
     return apples
 
-def generate_game_field(rows=4):
-    """O'yin maydonini yaratish"""
+def generate_game_field(rows=1):
+    """O'yin maydonini yaratish (1 qatordan boshlanadi)"""
     field = []
     for i in range(rows):
         row = generate_game_row()
         field.append(row)
     return field
 
-def format_game_field(field):
+def format_game_field(field, current_row, total_rows):
     """O'yin maydonini matn ko'rinishiga o'tkazish"""
-    result = "🎰 *APPLE OF FORTUNE* 🎰\n\n"
+    result = "🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
     
+    # Qatorlarni chiroyli ko'rsatish
     for i, row in enumerate(field):
         row_text = " ".join(row)
-        result += f"`{row_text}`\n"
+        # Butun olmani belgilash (🍎)
+        if "🍎" in row:
+            # Butun olma qaysi pozitsiyada ekanligini topish
+            pos = row.index("🍎") + 1
+            result += f"`{row_text}`  👈 Butun olma {i+1}-qator, {pos}-katakda\n"
+        else:
+            result += f"`{row_text}`\n"
     
-    result += "\n⚡️ Qatorlarni o'zgartirish uchun pastdagi tugmani bosing!"
+    result += f"\n📊 *Qatorlar:* {current_row}/{total_rows}\n"
+    result += "\n🎯 *Betwinner Apple of Fortune o'yiniga kiring*"
+    result += "\n📌 *Ko'rsatilgan qatorlar bo'yicha yuring*"
+    result += "\n\n⚡️ Keyingi qatorni ochish uchun tugmani bosing!"
+    
     return result
 
 def check_bet_id(bet_id):
@@ -403,25 +415,43 @@ async def use_promocode(message: types.Message):
     user_id = message.from_user.id
     user = get_user(user_id)
     
-    if user and not user[5]:  # promo_used = False
-        use_promo(user_id)
+    if user and not user[8]:  # promo_used = False (index 8)
+        # Promokodni ishlatish
+        cursor.execute(
+            "UPDATE users SET promo_used = TRUE, apk_access = TRUE WHERE user_id = ?",
+            (user_id,)
+        )
+        conn.commit()
         
-        # Referalga bonus berish
-        referrer_id, referrer_balance = use_promo(user_id)
+        # Referalga bonus
+        cursor.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
+        referrer = cursor.fetchone()
+        
+        referrer_balance = None
+        if referrer and referrer[0]:
+            # Referalga bonus berish
+            new_balance = update_balance(referrer[0], REFERRAL_BONUS, f"referal_bonus_{user_id}")
+            referrer_balance = new_balance
+            
+            cursor.execute(
+                "UPDATE referrals SET bonus_given = TRUE WHERE user_id = ? AND referred_id = ?",
+                (referrer[0], user_id)
+            )
+            conn.commit()
         
         text = "✅ *SIGNAL7 promokodi muvaffaqiyatli faollashtirildi!*\n\n"
         text += "📱 APK yuklash huquqi berildi!\n\n"
         
-        if referrer_id:
+        if referrer and referrer[0]:
             text += f"👤 Sizni taklif qilgan foydalanuvchi {REFERRAL_BONUS} ball bilan taqdirlandi!"
         
         await message.answer(text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
         
         # Referalga xabar yuborish
-        if referrer_id:
+        if referrer and referrer[0]:
             try:
                 await bot.send_message(
-                    referrer_id,
+                    referrer[0],
                     f"💰 *Balans yangilandi!*\n\n"
                     f"Sizning referalingiz SIGNAL7 promokodini ishlatdi!\n"
                     f"Hisobingizga +{REFERRAL_BONUS} ball qo'shildi.\n"
@@ -448,8 +478,8 @@ async def get_signal(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❌ Foydalanuvchi topilmadi!")
         return
     
-    free_signals_used = user[4]
-    balance = user[3]
+    free_signals_used = user[4]  # free_signals_used
+    balance = user[3]  # balance
     
     # Bepul signal tekshirish
     if free_signals_used < FREE_SIGNALS:
@@ -460,7 +490,7 @@ async def get_signal(callback: types.CallbackQuery, state: FSMContext):
         free_left = FREE_SIGNALS - free_signals_used - 1
         
         await callback.message.edit_text(
-            f"🎁 *Bepul signal* ({free_left+1}/{FREE_SIGNALS})\n\n"
+            f"🎁 *Bepul signal* ({free_signals_used + 1}/{FREE_SIGNALS})\n\n"
             f"🎫 Iltimos, Betwinner ID raqamingizni kiriting:\n\n"
             f"🔢 Raqam 9 dan 12 gacha xonadan iborat bo'lishi kerak.\n\n"
             f"⚡️ Qolgan bepul signallar: {free_left}",
@@ -568,7 +598,7 @@ async def download_apk(callback: types.CallbackQuery):
     await callback.answer()
     
     user = get_user(callback.from_user.id)
-    if user and user[7]:  # apk_access = True
+    if user and user[9]:  # apk_access = True (index 9)
         kb = InlineKeyboardBuilder()
         kb.button(text="📱 APK yuklash", url=APK_URL)
         kb.button(text="🏠 Asosiy menyu", callback_data="main_menu")
@@ -690,12 +720,17 @@ async def start_game(callback: types.CallbackQuery, state: FSMContext):
             parse_mode="Markdown"
         )
     
-    # O'yin maydonini yaratish
-    game_field = generate_game_field(rows=4)
-    await state.update_data(game_field=game_field, current_row=0)
+    # O'yin maydonini yaratish - 1 qatordan boshlanadi
+    game_field = generate_game_field(rows=1)
+    await state.update_data(game_field=game_field, current_row=1, max_rows=6)
+    
+    # Signal matni
+    signal_text = f"🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
+    signal_text += f"🎫 Betwinner ID: `{data.get('bet_id')}`\n\n"
+    signal_text += format_game_field(game_field, 1, 6)
     
     await callback.message.edit_text(
-        format_game_field(game_field),
+        signal_text,
         parse_mode="Markdown",
         reply_markup=game_control_keyboard()
     )
@@ -707,10 +742,12 @@ async def next_row(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     
     data = await state.get_data()
-    current_row = data.get('current_row', 0)
+    current_row = data.get('current_row', 1)
+    max_rows = data.get('max_rows', 6)
     game_field = data.get('game_field', [])
+    bet_id = data.get('bet_id', '')
     
-    if current_row < 5:
+    if current_row < max_rows:
         current_row += 1
         await state.update_data(current_row=current_row)
         
@@ -719,20 +756,33 @@ async def next_row(callback: types.CallbackQuery, state: FSMContext):
         game_field.append(new_row)
         await state.update_data(game_field=game_field)
         
+        # Signal matni
+        signal_text = f"🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
+        signal_text += f"🎫 Betwinner ID: `{bet_id}`\n\n"
+        signal_text += format_game_field(game_field, current_row, max_rows)
+        
         await callback.message.edit_text(
-            format_game_field(game_field),
+            signal_text,
             parse_mode="Markdown",
             reply_markup=game_control_keyboard()
         )
     else:
+        # O'yin tugadi - 6 qator
+        signal_text = f"🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
+        signal_text += f"🎫 Betwinner ID: `{bet_id}`\n\n"
+        signal_text += format_game_field(game_field, current_row, max_rows)
+        signal_text += "\n\n🎉 *O'YIN TUGADI!* 🎉\n"
+        signal_text += "💰 Yutuqni olish uchun Betwinner'ga kiring!\n\n"
+        signal_text += "🔄 Qayta boshlash uchun tugmani bosing."
+        
         kb = InlineKeyboardBuilder()
         kb.button(text="🔄 Qayta boshlash", callback_data="restart_game")
         kb.button(text="🏠 Asosiy menyu", callback_data="main_menu")
         kb.adjust(1)
         
         await callback.message.edit_text(
-            "🎉 O'yin tugadi! Yutuqni oling! 🎉\n\n"
-            "Qayta boshlash uchun tugmani bosing.",
+            signal_text,
+            parse_mode="Markdown",
             reply_markup=kb.as_markup()
         )
 
@@ -757,13 +807,21 @@ async def end_game(callback: types.CallbackQuery, state: FSMContext):
 async def restart_game(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     
-    # Yangi o'yin
-    game_field = generate_game_field(rows=4)
-    await state.update_data(game_field=game_field, current_row=0)
+    data = await state.get_data()
+    bet_id = data.get('bet_id', '')
+    
+    # Yangi o'yin - 1 qatordan boshlanadi
+    game_field = generate_game_field(rows=1)
+    await state.update_data(game_field=game_field, current_row=1, max_rows=6)
     await state.set_state(SignalStates.waiting_for_game_continue)
     
+    # Signal matni
+    signal_text = f"🎰 *APPLE OF FORTUNE SIGNAL* 🎰\n\n"
+    signal_text += f"🎫 Betwinner ID: `{bet_id}`\n\n"
+    signal_text += format_game_field(game_field, 1, 6)
+    
     await callback.message.edit_text(
-        format_game_field(game_field),
+        signal_text,
         parse_mode="Markdown",
         reply_markup=game_control_keyboard()
     )
@@ -790,7 +848,171 @@ async def admin_stats(callback: types.CallbackQuery):
         reply_markup=admin_panel_keyboard()
     )
 
-# Qolgan admin handlerlari avvalgidek qoladi...
+@dp.callback_query(F.data == "admin_user")
+async def admin_user(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🚫 Ruxsat yo'q!", show_alert=True)
+        return
+    
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_for_user_id)
+    
+    await callback.message.edit_text(
+        "👤 Foydalanuvchi ID sini kiriting:",
+        reply_markup=back_button("admin_panel")
+    )
+
+@dp.callback_query(F.data == "admin_add_apk")
+async def admin_add_apk(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🚫 Ruxsat yo'q!", show_alert=True)
+        return
+    
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_for_apk_url)
+    
+    await callback.message.edit_text(
+        "🔗 Yangi APK havolasini kiriting:",
+        reply_markup=back_button("admin_panel")
+    )
+
+@dp.callback_query(F.data == "admin_remove_apk")
+async def admin_remove_apk(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🚫 Ruxsat yo'q!", show_alert=True)
+        return
+    
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_for_remove_apk)
+    
+    await callback.message.edit_text(
+        "❌ APK huquqini olib tashlash uchun user ID kiriting:",
+        reply_markup=back_button("admin_panel")
+    )
+
+@dp.callback_query(F.data == "admin_add_balance")
+async def admin_add_balance(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🚫 Ruxsat yo'q!", show_alert=True)
+        return
+    
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_for_balance_amount)
+    
+    await callback.message.edit_text(
+        "💰 Ball qo'shish formati: `user_id ball_miqdori`\n\n"
+        "Misol: 123456789 10",
+        parse_mode="Markdown",
+        reply_markup=back_button("admin_panel")
+    )
+
+@dp.callback_query(F.data == "admin_panel")
+async def return_to_admin(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🚫 Ruxsat yo'q!", show_alert=True)
+        return
+    
+    await callback.answer()
+    await state.clear()
+    
+    await callback.message.edit_text(
+        "🔐 Admin panel",
+        reply_markup=admin_panel_keyboard()
+    )
+
+# Admin state handlerlari
+@dp.message(AdminStates.waiting_for_user_id)
+async def process_user_info(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    
+    try:
+        user_id = int(message.text.strip())
+        user = get_user(user_id)
+        
+        if user:
+            text = f"👤 *Foydalanuvchi ma'lumotlari*\n\n"
+            text += f"🆔 ID: {user[0]}\n"
+            text += f"📛 Username: @{user[1]}\n"
+            text += f"👤 Ism: {user[2]}\n"
+            text += f"📅 Qo'shilgan: {user[3]}\n"
+            text += f"💰 Balans: {user[3]}\n"
+            text += f"🎁 Bepul signallar: {user[4]}/{FREE_SIGNALS}\n"
+            text += f"📊 Jami signallar: {user[5]}\n"
+            text += f"👥 Referal: {user[6]}\n"
+            text += f"📱 APK: {'Ha' if user[9] else 'Yo‘q'}\n"
+            
+            await message.answer(text, parse_mode="Markdown")
+        else:
+            await message.answer("❌ Foydalanuvchi topilmadi!")
+    except Exception as e:
+        await message.answer(f"❌ Xatolik: {e}")
+    
+    await state.clear()
+    await message.answer("🔐 Admin panel", reply_markup=admin_panel_keyboard())
+
+@dp.message(AdminStates.waiting_for_apk_url)
+async def process_apk_url(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    
+    global APK_URL
+    APK_URL = message.text.strip()
+    
+    await message.answer(f"✅ APK havolasi yangilandi:\n{APK_URL}")
+    
+    await state.clear()
+    await message.answer("🔐 Admin panel", reply_markup=admin_panel_keyboard())
+
+@dp.message(AdminStates.waiting_for_remove_apk)
+async def process_remove_apk(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    
+    try:
+        user_id = int(message.text.strip())
+        set_apk_access(user_id, False)
+        
+        await message.answer(f"✅ Foydalanuvchi {user_id} dan APK huquqi olib tashlandi!")
+    except Exception as e:
+        await message.answer(f"❌ Xatolik: {e}")
+    
+    await state.clear()
+    await message.answer("🔐 Admin panel", reply_markup=admin_panel_keyboard())
+
+@dp.message(AdminStates.waiting_for_balance_amount)
+async def process_add_balance(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    
+    try:
+        parts = message.text.strip().split()
+        if len(parts) == 2:
+            user_id = int(parts[0])
+            amount = int(parts[1])
+            
+            new_balance = update_balance(user_id, amount, "admin_add")
+            
+            await message.answer(f"✅ Foydalanuvchi {user_id} ga {amount} ball qo'shildi!\n💳 Yangi balans: {new_balance}")
+            
+            # Foydalanuvchiga xabar yuborish
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"💰 *Balans yangilandi!*\n\n"
+                    f"Hisobingizga +{amount} ball qo'shildi.\n"
+                    f"💳 Yangi balans: {format_balance_message(new_balance)}",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass
+        else:
+            await message.answer("❌ Noto'g'ri format! `user_id ball` shaklida kiriting.")
+    except Exception as e:
+        await message.answer(f"❌ Xatolik: {e}")
+    
+    await state.clear()
+    await message.answer("🔐 Admin panel", reply_markup=admin_panel_keyboard())
 
 # ============= STARTUP VA SHUTDOWN =============
 async def on_startup():
