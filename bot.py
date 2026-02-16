@@ -21,9 +21,9 @@ ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "123456789").split(",") if
 APK_URL = os.getenv("APK_URL", "https://example.com/app.apk")
 
 # Ballar konfiguratsiyasi
-FREE_SIGNALS = 3  # Bepul signallar soni
+START_BALANCE = 4500  # Yangi foydalanuvchiga beriladigan boshlang'ich ball
 SIGNAL_PRICE = 1500  # Signal narxi
-REFERRAL_BONUS = 500  # Referal uchun bonus
+REFERRAL_BONUS = 500  # Referal uchun bonus (qo'shimcha)
 
 # Ma'lumotlar bazasi
 DB_DIR = "/data" if os.path.exists("/data") else os.getcwd()
@@ -48,7 +48,6 @@ def init_database():
             first_name TEXT,
             joined_date TIMESTAMP,
             balance INTEGER DEFAULT 0,
-            free_signals_used INTEGER DEFAULT 0,
             total_signals INTEGER DEFAULT 0,
             referrer_id INTEGER,
             promo_used BOOLEAN DEFAULT FALSE,
@@ -63,7 +62,8 @@ def init_database():
             user_id INTEGER,
             referred_id INTEGER,
             date TIMESTAMP,
-            bonus_given BOOLEAN DEFAULT FALSE
+            bonus_given BOOLEAN DEFAULT FALSE,
+            bonus_amount INTEGER DEFAULT 0
         )
         ''')
         
@@ -168,13 +168,21 @@ def format_balance_message(balance):
 
 # ============= DATABASE FUNKSIYALARI =============
 def add_user(user_id, username, first_name, referrer_id=None):
-    """Yangi foydalanuvchi qo'shish"""
+    """Yangi foydalanuvchi qo'shish (4500 ball bilan)"""
     try:
         cursor.execute(
-            "INSERT INTO users (user_id, username, first_name, joined_date, referrer_id) VALUES (?, ?, ?, ?, ?)",
-            (user_id, username, first_name, datetime.now(), referrer_id)
+            "INSERT INTO users (user_id, username, first_name, joined_date, balance, referrer_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, username, first_name, datetime.now(), START_BALANCE, referrer_id)
         )
         conn.commit()
+        
+        # Balans tarixiga yozish
+        cursor.execute(
+            "INSERT INTO balance_history (user_id, amount, reason, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, START_BALANCE, "start_bonus", datetime.now())
+        )
+        conn.commit()
+        
         return True
     except Exception as e:
         logging.error(f"Error adding user: {e}")
@@ -206,61 +214,26 @@ def update_balance(user_id, amount, reason=""):
     
     return new_balance
 
-def can_get_free_signal(user_id):
-    """Bepul signal olish mumkinligini tekshirish"""
-    user = get_user(user_id)
-    if user:
-        return user[4] < FREE_SIGNALS  # free_signals_used < FREE_SIGNALS
-    return False
-
-def use_free_signal(user_id):
-    """Bepul signaldan foydalanish"""
+def add_referral_bonus(referrer_id, referred_id, bonus_amount):
+    """Referalga bonus berish va bildirishnoma yuborish"""
+    # Referalga bonus berish
+    new_balance = update_balance(referrer_id, bonus_amount, f"referal_bonus_{referred_id}")
+    
+    # Referalni bonus berilgan deb belgilash
     cursor.execute(
-        "UPDATE users SET free_signals_used = free_signals_used + 1 WHERE user_id = ?",
-        (user_id,)
-    )
-    conn.commit()
-
-def increment_total_signals(user_id):
-    """Jami signallarni oshirish"""
-    cursor.execute(
-        "UPDATE users SET total_signals = total_signals + 1 WHERE user_id = ?",
-        (user_id,)
-    )
-    conn.commit()
-
-def use_promo(user_id):
-    """Promokodni ishlatish"""
-    cursor.execute(
-        "UPDATE users SET promo_used = TRUE, apk_access = TRUE WHERE user_id = ?",
-        (user_id,)
+        "UPDATE referrals SET bonus_given = TRUE, bonus_amount = ? WHERE user_id = ? AND referred_id = ?",
+        (bonus_amount, referrer_id, referred_id)
     )
     conn.commit()
     
-    # Referalga bonus
-    cursor.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
-    referrer = cursor.fetchone()
-    
-    if referrer and referrer[0]:
-        # Referalga bonus berish
-        new_balance = update_balance(referrer[0], REFERRAL_BONUS, f"referal_bonus_{user_id}")
-        
-        cursor.execute(
-            "UPDATE referrals SET bonus_given = TRUE WHERE user_id = ? AND referred_id = ?",
-            (referrer[0], user_id)
-        )
-        conn.commit()
-        
-        return referrer[0], new_balance
-    
-    return None, None
+    return new_balance
 
 def add_referral(user_id, referred_id):
     """Referal qo'shish"""
     try:
         cursor.execute(
-            "INSERT INTO referrals (user_id, referred_id, date) VALUES (?, ?, ?)",
-            (user_id, referred_id, datetime.now())
+            "INSERT INTO referrals (user_id, referred_id, date, bonus_given) VALUES (?, ?, ?, ?)",
+            (user_id, referred_id, datetime.now(), False)
         )
         conn.commit()
         return True
@@ -282,6 +255,15 @@ def get_referrals_with_bonus(user_id):
         (user_id,)
     )
     return cursor.fetchone()[0]
+
+def get_total_referral_earnings(user_id):
+    """Referallardan jami daromadni olish"""
+    cursor.execute(
+        "SELECT SUM(bonus_amount) FROM referrals WHERE user_id = ? AND bonus_given = 1",
+        (user_id,)
+    )
+    result = cursor.fetchone()[0]
+    return result if result else 0
 
 def set_apk_access(user_id, access):
     """APK huquqini sozlash"""
@@ -375,32 +357,40 @@ async def cmd_start(message: types.Message):
     # Foydalanuvchini tekshirish
     user = get_user(user_id)
     if not user:
+        # Yangi foydalanuvchi - 4500 ball bilan
         add_user(user_id, username, first_name, referrer_id)
+        
+        # Referalga xabar yuborish
         if referrer_id:
             add_referral(referrer_id, user_id)
             
-            # Referalga xabar yuborish
             try:
+                # Referalga bonus haqida xabar
                 await bot.send_message(
                     referrer_id,
                     f"🎉 *Yangi referal!*\n\n"
                     f"👤 {first_name} sizning havolangiz orqali ro'yxatdan o'tdi!\n\n"
-                    f"💰 U SIGNAL7 promokodini ishlatganda {REFERRAL_BONUS} ball olasiz!",
+                    f"💰 U SIGNAL7 promokodini ishlatganda +{REFERRAL_BONUS} ball olasiz!\n"
+                    f"💡 SIGNAL7 kodini ishlatishi bilanoq bonus hisobingizga tushadi.",
                     parse_mode="Markdown"
                 )
             except:
                 pass
-    
-    free_left = FREE_SIGNALS - (user[4] if user else 0)
-    
-    welcome_text = f"👋 Assalomu alaykum, {first_name}!\n\n"
-    welcome_text += "🎮 *Apple of Fortune Signal Bot* ga xush kelibsiz!\n\n"
-    welcome_text += f"🎁 Sizda *{free_left} ta bepul signal* mavjud!\n"
-    welcome_text += f"💰 Keyingi signallar: *{SIGNAL_PRICE} ball*\n"
-    welcome_text += f"👥 Referal taklif: *{REFERRAL_BONUS} ball*\n\n"
-    welcome_text += "📝 Ro'yxatdan o'tish uchun: SIGNAL7"
-    
-    await message.answer(welcome_text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+        
+        welcome_text = f"👋 Assalomu alaykum, {first_name}!\n\n"
+        welcome_text += "🎮 *Apple of Fortune Signal Bot* ga xush kelibsiz!\n\n"
+        welcome_text += f"💰 Sizga *{START_BALANCE} ball* sovg'a qilindi!\n"
+        welcome_text += f"🎫 1 signal narxi: *{SIGNAL_PRICE} ball*\n"
+        welcome_text += f"👥 Referal taklif: *+{REFERRAL_BONUS} ball*\n\n"
+        welcome_text += "📝 Ro'yxatdan o'tish uchun: SIGNAL7"
+        
+        await message.answer(welcome_text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+    else:
+        # Eski foydalanuvchi
+        welcome_text = f"👋 Xush kelibsiz, {first_name}!\n\n"
+        welcome_text += f"💰 Sizning balansingiz: {format_balance_message(user[4])}"
+        
+        await message.answer(welcome_text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: types.Message):
@@ -415,7 +405,7 @@ async def use_promocode(message: types.Message):
     user_id = message.from_user.id
     user = get_user(user_id)
     
-    if user and not user[8]:  # promo_used = False (index 8)
+    if user and not user[7]:  # promo_used = False (index 7)
         # Promokodni ishlatish
         cursor.execute(
             "UPDATE users SET promo_used = TRUE, apk_access = TRUE WHERE user_id = ?",
@@ -423,43 +413,33 @@ async def use_promocode(message: types.Message):
         )
         conn.commit()
         
-        # Referalga bonus
-        cursor.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
-        referrer = cursor.fetchone()
-        
-        referrer_balance = None
-        if referrer and referrer[0]:
-            # Referalga bonus berish
-            new_balance = update_balance(referrer[0], REFERRAL_BONUS, f"referal_bonus_{user_id}")
-            referrer_balance = new_balance
-            
-            cursor.execute(
-                "UPDATE referrals SET bonus_given = TRUE WHERE user_id = ? AND referred_id = ?",
-                (referrer[0], user_id)
-            )
-            conn.commit()
-        
         text = "✅ *SIGNAL7 promokodi muvaffaqiyatli faollashtirildi!*\n\n"
         text += "📱 APK yuklash huquqi berildi!\n\n"
         
+        # Referalga bonus berish
+        cursor.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
+        referrer = cursor.fetchone()
+        
         if referrer and referrer[0]:
+            # Referalga bonus berish
+            new_balance = add_referral_bonus(referrer[0], user_id, REFERRAL_BONUS)
+            
             text += f"👤 Sizni taklif qilgan foydalanuvchi {REFERRAL_BONUS} ball bilan taqdirlandi!"
-        
-        await message.answer(text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
-        
-        # Referalga xabar yuborish
-        if referrer and referrer[0]:
+            
+            # Referalga bildirishnoma yuborish
             try:
                 await bot.send_message(
                     referrer[0],
                     f"💰 *Balans yangilandi!*\n\n"
-                    f"Sizning referalingiz SIGNAL7 promokodini ishlatdi!\n"
+                    f"🎉 Sizning referalingiz @{message.from_user.username or 'foydalanuvchi'} SIGNAL7 promokodini ishlatdi!\n"
                     f"Hisobingizga +{REFERRAL_BONUS} ball qo'shildi.\n"
-                    f"💳 Yangi balans: {format_balance_message(referrer_balance)}",
+                    f"💳 Yangi balans: {format_balance_message(new_balance)}",
                     parse_mode="Markdown"
                 )
             except:
                 pass
+        
+        await message.answer(text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     else:
         await message.answer(
             "❌ Siz allaqachon promokodni ishlatgansiz!",
@@ -478,35 +458,18 @@ async def get_signal(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❌ Foydalanuvchi topilmadi!")
         return
     
-    free_signals_used = user[4]  # free_signals_used
-    balance = user[3]  # balance
+    balance = user[4]  # balance
     
-    # Bepul signal tekshirish
-    if free_signals_used < FREE_SIGNALS:
-        # Bepul signal
-        await state.set_state(SignalStates.waiting_for_bet_id)
-        await state.update_data(is_free=True)
-        
-        free_left = FREE_SIGNALS - free_signals_used - 1
-        
-        await callback.message.edit_text(
-            f"🎁 *Bepul signal* ({free_signals_used + 1}/{FREE_SIGNALS})\n\n"
-            f"🎫 Iltimos, Betwinner ID raqamingizni kiriting:\n\n"
-            f"🔢 Raqam 9 dan 12 gacha xonadan iborat bo'lishi kerak.\n\n"
-            f"⚡️ Qolgan bepul signallar: {free_left}",
-            parse_mode="Markdown",
-            reply_markup=back_button()
-        )
-    elif balance >= SIGNAL_PRICE:
+    if balance >= SIGNAL_PRICE:
         # Pullik signal
         await state.set_state(SignalStates.waiting_for_bet_id)
-        await state.update_data(is_free=False)
         
         await callback.message.edit_text(
-            f"💰 *Pullik signal*\n\n"
+            f"💰 *Signal olish*\n\n"
             f"🎫 Iltimos, Betwinner ID raqamingizni kiriting:\n\n"
             f"🔢 Raqam 9 dan 12 gacha xonadan iborat bo'lishi kerak.\n\n"
-            f"💳 Signal narxi: {SIGNAL_PRICE} ball",
+            f"💳 Signal narxi: {SIGNAL_PRICE} ball\n"
+            f"💼 Sizning balansingiz: {format_balance_message(balance)}",
             parse_mode="Markdown",
             reply_markup=back_button()
         )
@@ -515,7 +478,7 @@ async def get_signal(callback: types.CallbackQuery, state: FSMContext):
             f"❌ Sizda yetarli ball mavjud emas!\n\n"
             f"💰 Sizning balansingiz: {format_balance_message(balance)}\n"
             f"🎫 Signal narxi: {SIGNAL_PRICE} ball\n\n"
-            f"👥 Do'stlaringizni taklif qiling va {REFERRAL_BONUS} ball oling!",
+            f"👥 Do'stlaringizni taklif qiling va har bir referal uchun +{REFERRAL_BONUS} ball oling!",
             parse_mode="Markdown",
             reply_markup=main_menu_keyboard()
         )
@@ -526,14 +489,11 @@ async def check_balance(callback: types.CallbackQuery):
     
     user = get_user(callback.from_user.id)
     if user:
-        free_left = FREE_SIGNALS - user[4]
-        
         text = f"💰 *Sizning balansingiz*\n\n"
-        text += f"💳 Ballar: {format_balance_message(user[3])}\n"
-        text += f"🎁 Bepul signallar: {free_left}/{FREE_SIGNALS}\n"
+        text += f"💳 Joriy balans: {format_balance_message(user[4])}\n"
         text += f"📊 Jami signallar: {user[5]}\n\n"
         text += f"⚡️ 1 signal narxi: {SIGNAL_PRICE} ball\n"
-        text += f"👥 1 referal bonusi: {REFERRAL_BONUS} ball"
+        text += f"👥 1 referal bonusi: +{REFERRAL_BALANCE} ball"
         
         await callback.message.edit_text(
             text,
@@ -549,14 +509,15 @@ async def user_stats(callback: types.CallbackQuery):
     if user:
         referrals = get_referrals_count(callback.from_user.id)
         referrals_with_bonus = get_referrals_with_bonus(callback.from_user.id)
-        total_earned = referrals_with_bonus * REFERRAL_BONUS
+        total_earned = get_total_referral_earnings(callback.from_user.id)
         
         text = f"📊 *Sizning statistikangiz*\n\n"
         text += f"📅 Ro'yxatdan o'tgan: {user[2][:10]}\n"
         text += f"📊 Jami signallar: {user[5]}\n"
-        text += f"👥 Referallar: {referrals}\n"
+        text += f"👥 Jami referallar: {referrals}\n"
+        text += f"✅ Faol referallar: {referrals_with_bonus}\n"
         text += f"💰 Referallardan daromad: {format_balance_message(total_earned)}\n"
-        text += f"💳 Joriy balans: {format_balance_message(user[3])}"
+        text += f"💳 Joriy balans: {format_balance_message(user[4])}"
         
         await callback.message.edit_text(
             text,
@@ -570,7 +531,7 @@ async def referrals_menu(callback: types.CallbackQuery):
     
     count = get_referrals_count(callback.from_user.id)
     count_with_bonus = get_referrals_with_bonus(callback.from_user.id)
-    total_earned = count_with_bonus * REFERRAL_BONUS
+    total_earned = get_total_referral_earnings(callback.from_user.id)
     
     bot_username = (await bot.get_me()).username
     link = generate_referral_link(bot_username, callback.from_user.id)
@@ -580,7 +541,7 @@ async def referrals_menu(callback: types.CallbackQuery):
     text += f"✅ Faol referallar: *{count_with_bonus}*\n"
     text += f"💰 Umumiy daromad: *{format_balance_message(total_earned)}*\n\n"
     text += f"🔗 Sizning referal linkingiz:\n`{link}`\n\n"
-    text += f"💡 Do'stlaringiz SIGNAL7 promokodini ishlatganda {REFERRAL_BONUS} ball olasiz!"
+    text += f"💡 Do'stlaringiz SIGNAL7 promokodini ishlatganda +{REFERRAL_BONUS} ball olasiz!"
     
     kb = InlineKeyboardBuilder()
     kb.button(text="📢 Ulashish", switch_inline_query=f"🎮 Apple of Fortune Signal Bot\n\n🔗 Ro'yxatdan o'tish: {link}")
@@ -598,7 +559,7 @@ async def download_apk(callback: types.CallbackQuery):
     await callback.answer()
     
     user = get_user(callback.from_user.id)
-    if user and user[9]:  # apk_access = True (index 9)
+    if user and user[8]:  # apk_access = True (index 8)
         kb = InlineKeyboardBuilder()
         kb.button(text="📱 APK yuklash", url=APK_URL)
         kb.button(text="🏠 Asosiy menyu", callback_data="main_menu")
@@ -624,16 +585,16 @@ async def help_menu(callback: types.CallbackQuery):
     text = "ℹ️ *Yordam*\n\n"
     text += "🎮 *Apple of Fortune Signal Bot*\n\n"
     text += "📌 *Qanday ishlaydi?*\n"
-    text += f"• Yangi foydalanuvchilarga {FREE_SIGNALS} ta bepul signal\n"
-    text += f"• Keyingi signallar: {SIGNAL_PRICE} ball\n"
-    text += f"• Referal taklif: {REFERRAL_BONUS} ball\n\n"
+    text += f"• Yangi foydalanuvchilarga {START_BALANCE} ball beriladi\n"
+    text += f"• 1 signal narxi: {SIGNAL_PRICE} ball\n"
+    text += f"• Referal taklif: +{REFERRAL_BONUS} ball\n\n"
     text += "📝 *Promokod:* SIGNAL7\n"
     text += "   • APK yuklash huquqi\n"
-    text += "   • Referalga bonus\n\n"
+    text += "   • Referalga +500 ball\n\n"
     text += "👥 *Referal tizim:*\n"
     text += "1. Do'stlaringizga link yuboring\n"
     text += "2. Ular SIGNAL7 kodini ishlatsin\n"
-    text += f"3. Siz {REFERRAL_BONUS} ball olasiz"
+    text += f"3. Siz +{REFERRAL_BONUS} ball olasiz"
     
     await callback.message.edit_text(
         text,
@@ -660,16 +621,12 @@ async def process_bet_id(message: types.Message, state: FSMContext):
         await state.update_data(bet_id=bet_id)
         await state.set_state(SignalStates.waiting_for_game_start)
         
-        data = await state.get_data()
-        is_free = data.get('is_free', False)
+        user = get_user(message.from_user.id)
         
-        if is_free:
-            text = f"✅ Betwinner ID qabul qilindi: `{bet_id}`\n\n"
-            text += "🎁 *Bepul signal* bilan o'yinni boshlang!"
-        else:
-            text = f"✅ Betwinner ID qabul qilindi: `{bet_id}`\n\n"
-            text += f"💰 Hisobingizdan {SIGNAL_PRICE} ball yechiladi.\n"
-            text += "🎮 O'yinni boshlash uchun tugmani bosing!"
+        text = f"✅ Betwinner ID qabul qilindi: `{bet_id}`\n\n"
+        text += f"💰 Signal narxi: {SIGNAL_PRICE} ball\n"
+        text += f"💳 Balansingiz: {format_balance_message(user[4])}\n\n"
+        text += "🎮 O'yinni boshlash uchun tugmani bosing!"
         
         kb = InlineKeyboardBuilder()
         kb.button(text="🍎 O'yinni boshlash", callback_data="start_game")
@@ -694,31 +651,34 @@ async def start_game(callback: types.CallbackQuery, state: FSMContext):
     
     user_id = callback.from_user.id
     data = await state.get_data()
-    is_free = data.get('is_free', False)
     
-    # Balansni tekshirish va yangilash
-    if is_free:
-        use_free_signal(user_id)
-        balance_change = 0
-        reason = "free_signal"
-    else:
-        update_balance(user_id, -SIGNAL_PRICE, f"signal_purchase")
-        balance_change = -SIGNAL_PRICE
-    
-    increment_total_signals(user_id)
-    
-    # Yangi balansni olish
+    # Balansni tekshirish
     user = get_user(user_id)
-    new_balance = user[3]
+    if user[4] < SIGNAL_PRICE:
+        await callback.message.edit_text(
+            "❌ Balansingizda yetarli mablag' yo'q!",
+            reply_markup=main_menu_keyboard()
+        )
+        await state.clear()
+        return
+    
+    # Balansdan signal narxini yechish
+    new_balance = update_balance(user_id, -SIGNAL_PRICE, f"signal_purchase")
+    
+    # Jami signallarni oshirish
+    cursor.execute(
+        "UPDATE users SET total_signals = total_signals + 1 WHERE user_id = ?",
+        (user_id,)
+    )
+    conn.commit()
     
     # Balans o'zgarishi haqida xabar
-    if not is_free:
-        await callback.message.answer(
-            f"💰 *Balans yangilandi!*\n\n"
-            f"Signal uchun {SIGNAL_PRICE} ball yechildi.\n"
-            f"💳 Yangi balans: {format_balance_message(new_balance)}",
-            parse_mode="Markdown"
-        )
+    await callback.message.answer(
+        f"💰 *Balans yangilandi!*\n\n"
+        f"Signal uchun {SIGNAL_PRICE} ball yechildi.\n"
+        f"💳 Yangi balans: {format_balance_message(new_balance)}",
+        parse_mode="Markdown"
+    )
     
     # O'yin maydonini yaratish - 1 qatordan boshlanadi
     game_field = generate_game_field(rows=1)
@@ -931,16 +891,21 @@ async def process_user_info(message: types.Message, state: FSMContext):
         user = get_user(user_id)
         
         if user:
+            referrals = get_referrals_count(user_id)
+            referrals_with_bonus = get_referrals_with_bonus(user_id)
+            total_earned = get_total_referral_earnings(user_id)
+            
             text = f"👤 *Foydalanuvchi ma'lumotlari*\n\n"
             text += f"🆔 ID: {user[0]}\n"
             text += f"📛 Username: @{user[1]}\n"
             text += f"👤 Ism: {user[2]}\n"
             text += f"📅 Qo'shilgan: {user[3]}\n"
-            text += f"💰 Balans: {user[3]}\n"
-            text += f"🎁 Bepul signallar: {user[4]}/{FREE_SIGNALS}\n"
+            text += f"💰 Balans: {format_balance_message(user[4])}\n"
             text += f"📊 Jami signallar: {user[5]}\n"
-            text += f"👥 Referal: {user[6]}\n"
-            text += f"📱 APK: {'Ha' if user[9] else 'Yo‘q'}\n"
+            text += f"👥 Referallar: {referrals}\n"
+            text += f"✅ Faol referallar: {referrals_with_bonus}\n"
+            text += f"💰 Referal daromad: {format_balance_message(total_earned)}\n"
+            text += f"📱 APK: {'Ha' if user[8] else 'Yo‘q'}"
             
             await message.answer(text, parse_mode="Markdown")
         else:
@@ -993,7 +958,7 @@ async def process_add_balance(message: types.Message, state: FSMContext):
             
             new_balance = update_balance(user_id, amount, "admin_add")
             
-            await message.answer(f"✅ Foydalanuvchi {user_id} ga {amount} ball qo'shildi!\n💳 Yangi balans: {new_balance}")
+            await message.answer(f"✅ Foydalanuvchi {user_id} ga {amount} ball qo'shildi!\n💳 Yangi balans: {format_balance_message(new_balance)}")
             
             # Foydalanuvchiga xabar yuborish
             try:
@@ -1024,9 +989,9 @@ async def on_startup():
             await bot.send_message(
                 admin_id,
                 f"✅ *Bot ishga tushdi!*\n\n"
-                f"⚡️ Bepul signallar: {FREE_SIGNALS}\n"
-                f"💰 Signal narxi: {SIGNAL_PRICE}\n"
-                f"👥 Referal bonusi: {REFERRAL_BONUS}",
+                f"💰 Boshlang'ich balans: {START_BALANCE} ball\n"
+                f"🎫 Signal narxi: {SIGNAL_PRICE} ball\n"
+                f"👥 Referal bonusi: +{REFERRAL_BONUS} ball",
                 parse_mode="Markdown"
             )
         except:
