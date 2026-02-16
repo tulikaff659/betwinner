@@ -2,6 +2,7 @@ import asyncio
 import random
 import sqlite3
 import logging
+import os
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -10,7 +11,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import os
 
 # Logging sozlamalari
 logging.basicConfig(level=logging.INFO)
@@ -18,49 +18,67 @@ logging.basicConfig(level=logging.INFO)
 # ============= KONFIGURATSIYA =============
 # Railway environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "123456789").split(",")]
-DATABASE_FILE = os.getenv("DATABASE_FILE", "apple_fortune.db")
+ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "123456789").split(",") if id.strip()]
 APK_URL = os.getenv("APK_URL", "https://example.com/app.apk")
 
+# Ma'lumotlar bazasi uchun papka yaratish
+DB_DIR = "/data" if os.path.exists("/data") else os.getcwd()
+DATABASE_FILE = os.path.join(DB_DIR, "apple_fortune.db")
+
+logging.info(f"📁 Ma'lumotlar bazasi joylashuvi: {DATABASE_FILE}")
+
 # ============= MA'LUMOTLAR BAZASI =============
-conn = sqlite3.connect(DATABASE_FILE, check_same_thread=False)
-cursor = conn.cursor()
+def init_database():
+    """Ma'lumotlar bazasini yaratish va jadvallarni sozlash"""
+    global conn, cursor
+    
+    try:
+        conn = sqlite3.connect(DATABASE_FILE, check_same_thread=False)
+        cursor = conn.cursor()
+        
+        # Bazani yaratish
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            joined_date TIMESTAMP,
+            balance INTEGER DEFAULT 0,
+            referrer_id INTEGER,
+            promo_used BOOLEAN DEFAULT FALSE,
+            apk_access BOOLEAN DEFAULT FALSE
+        )
+        ''')
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            referred_id INTEGER,
+            date TIMESTAMP,
+            bonus_given BOOLEAN DEFAULT FALSE
+        )
+        ''')
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            game_type TEXT,
+            signal_data TEXT,
+            created_at TIMESTAMP
+        )
+        ''')
+        
+        conn.commit()
+        logging.info("✅ Ma'lumotlar bazasi muvaffaqiyatli yaratildi")
+        
+    except Exception as e:
+        logging.error(f"❌ Ma'lumotlar bazasini yaratishda xatolik: {e}")
+        raise
 
-# Bazani yaratish
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    first_name TEXT,
-    joined_date TIMESTAMP,
-    balance INTEGER DEFAULT 0,
-    referrer_id INTEGER,
-    promo_used BOOLEAN DEFAULT FALSE,
-    apk_access BOOLEAN DEFAULT FALSE
-)
-''')
-
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS referrals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    referred_id INTEGER,
-    date TIMESTAMP,
-    bonus_given BOOLEAN DEFAULT FALSE
-)
-''')
-
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS signals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    game_type TEXT,
-    signal_data TEXT,
-    created_at TIMESTAMP
-)
-''')
-
-conn.commit()
+# Bazani ishga tushirish
+init_database()
 
 # ============= FSM HOLATLARI =============
 class SignalStates(StatesGroup):
@@ -643,8 +661,8 @@ async def process_user_info(message: types.Message, state: FSMContext):
             await message.answer(text, parse_mode="Markdown")
         else:
             await message.answer("❌ Foydalanuvchi topilmadi!")
-    except:
-        await message.answer("❌ Noto'g'ri format!")
+    except Exception as e:
+        await message.answer(f"❌ Xatolik: {e}")
     
     await state.clear()
     await message.answer("🔐 Admin panel", reply_markup=admin_panel_keyboard())
@@ -672,8 +690,8 @@ async def process_remove_apk(message: types.Message, state: FSMContext):
         set_apk_access(user_id, False)
         
         await message.answer(f"✅ Foydalanuvchi {user_id} dan APK huquqi olib tashlandi!")
-    except:
-        await message.answer("❌ Xatolik yuz berdi!")
+    except Exception as e:
+        await message.answer(f"❌ Xatolik: {e}")
     
     await state.clear()
     await message.answer("🔐 Admin panel", reply_markup=admin_panel_keyboard())
@@ -694,8 +712,8 @@ async def process_add_balance(message: types.Message, state: FSMContext):
             await message.answer(f"✅ Foydalanuvchi {user_id} ga {amount} ball qo'shildi!")
         else:
             await message.answer("❌ Noto'g'ri format! `user_id ball` shaklida kiriting.")
-    except:
-        await message.answer("❌ Xatolik yuz berdi!")
+    except Exception as e:
+        await message.answer(f"❌ Xatolik: {e}")
     
     await state.clear()
     await message.answer("🔐 Admin panel", reply_markup=admin_panel_keyboard())
