@@ -190,7 +190,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Bitta xabar – barcha tugmalar bilan
     text = (
-        "🎰 *WinWin Bukmekeriga xush kelibsiz!* 🎰\n\n"
+        "🎰 *BetWinner Bukmekeriga xush kelibsiz!* 🎰\n\n"
         "🔥 *Premium bonuslar* va har hafta yangi yutuqlar sizni kutmoqda!\n"
         "📊 *O‘yinlar uchun maxsus yutish strategiyalari* va *signal* xizmati orqali g‘alaba qozonish imkoniyatingizni oshiring.\n\n"
         "💰 Bu yerda nafaqat o‘ynab, balki *pul ishlashingiz* mumkin:\n"
@@ -210,7 +210,7 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     text = (
-        "🎰 *WinWin Bukmekeriga xush kelibsiz!* 🎰\n\n"
+        "🎰 *BetWinner Bukmekeriga xush kelibsiz!* 🎰\n\n"
         "🔥 *Premium bonuslar* va har hafta yangi yutuqlar sizni kutmoqda!\n"
         "📊 *O‘yinlar uchun maxsus yutish strategiyalari* va *signal* xizmati orqali g‘alaba qozonish imkoniyatingizni oshiring.\n\n"
         "💰 Bu yerda nafaqat o‘ynab, balki *pul ishlashingiz* mumkin:\n"
