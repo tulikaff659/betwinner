@@ -87,6 +87,8 @@ def get_admin_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("➖ Remove Game", callback_data="admin_remove_list")],
         [InlineKeyboardButton("✏️ Edit Game", callback_data="admin_edit_list")],
         [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")],
+        [InlineKeyboardButton("📨 Barchaga xabar yuborish", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("👥 Foydalanuvchilar soni", callback_data="admin_users_count")],
         [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -415,6 +417,26 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             total += views
         lines.append(f"\nJami: {total} marta")
         await query.edit_message_text("\n".join(lines), reply_markup=get_admin_keyboard())
+    
+    elif data == "admin_users_count":
+        # Foydalanuvchilar statistikasi
+        total_users = len(users_data)
+        active_users = sum(1 for u in users_data.values() if u.get("start_bonus_given", False))
+        referred_users = sum(1 for u in users_data.values() if u.get("referred_by") is not None)
+        total_balance = sum(u.get("balance", 0) for u in users_data.values())
+        
+        stats_text = (
+            f"👥 *Foydalanuvchilar statistikasi*\n\n"
+            f"📊 Umumiy foydalanuvchilar: *{total_users}*\n"
+            f"✅ Faol foydalanuvchilar: *{active_users}*\n"
+            f"🔗 Referral orqali kelganlar: *{referred_users}*\n"
+            f"💰 Umumiy balans: *{total_balance} so‘m*"
+        )
+        await query.edit_message_text(
+            stats_text,
+            parse_mode="Markdown",
+            reply_markup=get_admin_keyboard()
+        )
 
     elif data == "admin_close":
         await query.edit_message_text("Panel yopildi.")
@@ -463,6 +485,148 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
 
     return
+
+# ------------------- BROADCAST (BARCHAGA XABAR YUBORISH) -------------------
+BROADCAST_MSG = 100
+
+async def admin_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Broadcast tugmasi bosilganda ishga tushadi."""
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        await query.edit_message_text("Siz admin emassiz.")
+        return ConversationHandler.END
+
+    await query.edit_message_text(
+        "📨 *Barchaga yuboriladigan xabarni kiriting:*\n\n"
+        "Matn, rasm, video yoki fayl bo‘lishi mumkin.\n"
+        "Bekor qilish uchun /cancel buyrug'ini bosing.",
+        parse_mode="Markdown"
+    )
+    return BROADCAST_MSG
+
+async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Foydalanuvchilarga xabar yuborish."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("Siz admin emassiz.")
+        return ConversationHandler.END
+
+    # Yuboriladigan xabarni olish
+    message = update.message
+    
+    # Muvaffaqiyatli va muvaffaqiyatsiz yuborilganlar soni
+    success_count = 0
+    fail_count = 0
+    
+    # Xabar yuborilayotgani haqida adminni xabardor qilish
+    status_msg = await update.message.reply_text(
+        f"📨 Xabar yuborilmoqda...\n"
+        f"Jami foydalanuvchilar: {len(users_data)}"
+    )
+
+    # Barcha foydalanuvchilarga xabar yuborish
+    for user_id_str in users_data.keys():
+        try:
+            user_id = int(user_id_str)
+            
+            # Xabar turiga qarab yuborish
+            if message.text:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=message.text,
+                    parse_mode="HTML" if message.text else None
+                )
+            elif message.photo:
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=message.photo[-1].file_id,
+                    caption=message.caption,
+                    parse_mode="HTML" if message.caption else None
+                )
+            elif message.video:
+                await context.bot.send_video(
+                    chat_id=user_id,
+                    video=message.video.file_id,
+                    caption=message.caption,
+                    parse_mode="HTML" if message.caption else None
+                )
+            elif message.document:
+                await context.bot.send_document(
+                    chat_id=user_id,
+                    document=message.document.file_id,
+                    caption=message.caption,
+                    parse_mode="HTML" if message.caption else None
+                )
+            elif message.audio:
+                await context.bot.send_audio(
+                    chat_id=user_id,
+                    audio=message.audio.file_id,
+                    caption=message.caption,
+                    parse_mode="HTML" if message.caption else None
+                )
+            elif message.voice:
+                await context.bot.send_voice(
+                    chat_id=user_id,
+                    voice=message.voice.file_id,
+                    caption=message.caption
+                )
+            elif message.sticker:
+                await context.bot.send_sticker(
+                    chat_id=user_id,
+                    sticker=message.sticker.file_id
+                )
+            elif message.animation:
+                await context.bot.send_animation(
+                    chat_id=user_id,
+                    animation=message.animation.file_id,
+                    caption=message.caption
+                )
+            elif message.video_note:
+                await context.bot.send_video_note(
+                    chat_id=user_id,
+                    video_note=message.video_note.file_id
+                )
+            else:
+                # Agar xabar turi qo'llab-quvvatlanmasa
+                fail_count += 1
+                continue
+            
+            success_count += 1
+            
+            # Har 10 ta xabardan keyin statusni yangilash
+            if (success_count + fail_count) % 10 == 0:
+                await status_msg.edit_text(
+                    f"📨 Xabar yuborilmoqda...\n"
+                    f"✅ Yuborildi: {success_count}\n"
+                    f"❌ Yuborilmadi: {fail_count}\n"
+                    f"Jami: {len(users_data)}"
+                )
+                
+        except Exception as e:
+            fail_count += 1
+            logger.error(f"Xabar yuborishda xatolik (user {user_id_str}): {e}")
+
+    # Yakuniy natija
+    await status_msg.edit_text(
+        f"📨 *Xabar yuborish yakunlandi!*\n\n"
+        f"✅ Muvaffaqiyatli: *{success_count}*\n"
+        f"❌ Muvaffaqiyatsiz: *{fail_count}*\n"
+        f"👥 Jami foydalanuvchilar: *{len(users_data)}*",
+        parse_mode="Markdown",
+        reply_markup=get_admin_keyboard()
+    )
+    
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Broadcastni bekor qilish."""
+    context.user_data.clear()
+    await update.message.reply_text(
+        "❌ Xabar yuborish bekor qilindi.",
+        reply_markup=get_admin_keyboard()
+    )
+    return ConversationHandler.END
 
 # ------------------- ADD GAME KONVERSATSIYASI -------------------
 ADD_NAME, ADD_TEXT, ADD_PHOTO, ADD_FILE, ADD_BUTTON_TEXT, ADD_BUTTON_URL = range(6)
@@ -848,9 +1012,21 @@ def main():
     # Admin panel (umumiy callbacklar)
     app.add_handler(CallbackQueryHandler(
         admin_callback_handler,
-        pattern="^(admin_remove_list|admin_edit_list|admin_stats|admin_close|admin_back|remove_|confirm_remove)$"
+        pattern="^(admin_remove_list|admin_edit_list|admin_stats|admin_users_count|admin_close|admin_back|remove_|confirm_remove)$"
     ))
     app.add_handler(CommandHandler("admin", admin_panel))
+
+    # BROADCAST conversation
+    broadcast_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_broadcast_callback, pattern="^admin_broadcast$")],
+        states={
+            BROADCAST_MSG: [
+                MessageHandler(filters.ALL & ~filters.COMMAND, broadcast_message),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", broadcast_cancel)],
+    )
+    app.add_handler(broadcast_conv)
 
     # ADD GAME conversation
     add_conv = ConversationHandler(
