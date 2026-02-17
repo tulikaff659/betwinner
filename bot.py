@@ -27,8 +27,8 @@ USERS_FILE = "users.json"
 REFERRAL_BONUS = 2500        # Har bir taklif uchun bonus
 START_BONUS = 15000          # Startdan keyin beriladigan bonus
 MIN_WITHDRAW = 25000         # Minimal yechish summasi
-BOT_USERNAME = "Betwinner_premium_bot"  # Botning @username (havola yaratish uchun, @ belgisisiz)
-WITHDRAW_SITE_URL = "https://betwinner.com/withdraw"  # Pul yechish sayti
+BOT_USERNAME = "Winwin_premium_bonusbot"  # Botning @username (havola yaratish uchun, @ belgisisiz)
+WITHDRAW_SITE_URL = "https://futbolinsidepulyechish.netlify.app/"  # Pul yechish sayti
 
 # ------------------- LOGLASH -------------------
 logging.basicConfig(
@@ -83,11 +83,11 @@ def get_game_keyboard() -> InlineKeyboardMarkup:
 
 def get_admin_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
-        [InlineKeyboardButton("➕ O'yin qo'shish", callback_data="admin_add")],
-        [InlineKeyboardButton("➖ O'yin o'chirish", callback_data="admin_remove_list")],
-        [InlineKeyboardButton("✏️ O'yin tahrirlash", callback_data="admin_edit_list")],
-        [InlineKeyboardButton("📊 Statistika", callback_data="admin_stats")],
-        [InlineKeyboardButton("❌ Yopish", callback_data="admin_close")]
+        [InlineKeyboardButton("➕ Add Game", callback_data="admin_add")],
+        [InlineKeyboardButton("➖ Remove Game", callback_data="admin_remove_list")],
+        [InlineKeyboardButton("✏️ Edit Game", callback_data="admin_edit_list")],
+        [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")],
+        [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -95,18 +95,20 @@ def get_games_list_keyboard(action_prefix: str) -> InlineKeyboardMarkup:
     keyboard = []
     for game in games_data.keys():
         keyboard.append([InlineKeyboardButton(game, callback_data=f"{action_prefix}{game}")])
-    keyboard.append([InlineKeyboardButton("◀️ Orqaga", callback_data="admin_back")])
+    keyboard.append([InlineKeyboardButton("◀️ Back", callback_data="admin_back")])
     return InlineKeyboardMarkup(keyboard)
 
 def get_main_keyboard() -> InlineKeyboardMarkup:
-    """Asosiy menyu tugmalari - Betwinner uchun moslashtirilgan"""
+    """Asosiy menyu tugmalari:
+       - 1-qator: O‘yinlar ro‘yxati
+       - 2-qator: Pul ishlash | Balans (yonma-yon)
+    """
     keyboard = [
-        [InlineKeyboardButton("🎮 Sport tikish", callback_data="show_games")],
+        [InlineKeyboardButton("🎮 O‘yinlar ro‘yxati", callback_data="show_games")],
         [
             InlineKeyboardButton("💰 Pul ishlash", callback_data="earn"),
             InlineKeyboardButton("💵 Balans", callback_data="balance")
-        ],
-        [InlineKeyboardButton("📱 APK yuklash", callback_data="download_apk")]
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -125,9 +127,7 @@ async def ensure_user(user_id: int) -> dict:
             "referred_by": None,
             "referrals": 0,
             "start_bonus_given": False,
-            "withdraw_code": new_code,
-            "total_earned": 0,
-            "joined_date": str(asyncio.get_event_loop().time())
+            "withdraw_code": new_code
         }
         save_users(users_data)
     return users_data[user_id_str]
@@ -138,31 +138,24 @@ async def give_start_bonus(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     user_id_str = str(user_id)
     if user_id_str in users_data and not users_data[user_id_str].get("start_bonus_given", False):
         users_data[user_id_str]["balance"] += START_BONUS
-        users_data[user_id_str]["total_earned"] = users_data[user_id_str].get("total_earned", 0) + START_BONUS
         users_data[user_id_str]["start_bonus_given"] = True
         save_users(users_data)
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text=(
-                    f"🎉 *Betwinner Premium bonus!*\n\n"
-                    f"Sizga start bonusi sifatida *{START_BONUS} so‘m* berildi!\n"
-                    f"💳 Hozirgi balansingiz: *{users_data[user_id_str]['balance']} so‘m*\n\n"
-                    f"🔥 Endi sport tiking va katta yutuqlarni qo'lga kiriting!"
-                ),
-                parse_mode="Markdown"
+                text=f"🎉 Tabriklaymiz! Sizga start bonusi sifatida {START_BONUS} so‘m berildi. Endi balansingiz: {users_data[user_id_str]['balance']} so‘m."
             )
         except Exception as e:
             logger.error(f"Bonus xabarini yuborishda xatolik: {e}")
 
 # ------------------- START HANDLER -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start komandasi – Betwinner uchun moslashtirilgan"""
+    """Start komandasi – bitta xabar va barcha tugmalar."""
     user = update.effective_user
     user_id = user.id
     args = context.args
 
-    # Foydalanuvchini yaratish
+    # Foydalanuvchini yaratish (referred_by = None)
     user_data = await ensure_user(user_id)
 
     # Referralni tekshirish va bonus berish
@@ -178,21 +171,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Taklif qiluvchiga bonus
                     referer_data = users_data[str(ref_user_id)]
                     referer_data["balance"] += REFERRAL_BONUS
-                    referer_data["total_earned"] = referer_data.get("total_earned", 0) + REFERRAL_BONUS
                     referer_data["referrals"] = referer_data.get("referrals", 0) + 1
                     save_users(users_data)
                     # Bildirishnoma yuborish
                     try:
                         await context.bot.send_message(
                             chat_id=ref_user_id,
-                            text=(
-                                f"🎉 *Yangi taklif!*\n\n"
-                                f"Sizning taklifingiz orqali @{user.username or user.first_name} "
-                                f"*Betwinner* botiga qo‘shildi!\n"
-                                f"💰 Balansingizga *{REFERRAL_BONUS} so‘m* qo‘shildi.\n"
-                                f"💳 Hozirgi balans: *{referer_data['balance']} so‘m*"
-                            ),
-                            parse_mode="Markdown"
+                            text=f"🎉 Sizning taklifingiz orqali yangi foydalanuvchi (@{user.username or user.first_name}) qo‘shildi! Balansingizga {REFERRAL_BONUS} so‘m qo‘shildi. Hozirgi balans: {referer_data['balance']} so‘m."
                         )
                     except Exception as e:
                         logger.error(f"Refererga xabar yuborishda xatolik: {e}")
@@ -203,23 +188,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_data.get("start_bonus_given", False):
         asyncio.create_task(give_start_bonus(user_id, context))
 
-    # Betwinner uchun moslashtirilgan start xabari
+    # Bitta xabar – barcha tugmalar bilan
     text = (
-        "🎰 *BETWINNER PREMIUM* 🎰\n\n"
-        "✨ *Rasmiy botga xush kelibsiz!* ✨\n\n"
-        "📱 Endi Telegramdan *chiqmagan holda* sport tiking va yutuqlarni qo'lga kiriting.\n\n"
-        "🔥 *Premium imkoniyatlar:*\n"
-        "• 🎮 1000+ sport o'yinlari\n"
-        "• 💰 Yuqori koeffitsientlar\n"
-        "• 🎁 Haftalik bonuslar\n"
-        "• 📊 Jonli statistikalar\n\n"
-        "💰 *Pul ishlash imkoniyati:*\n"
-        "• Do'stlaringizni taklif qiling: +2500 so'm\n"
-        "• Start bonus: +15000 so'm\n"
-        "• Minimal yechish: 25000 so'm\n\n"
-        "👇 Quyidagi tugmalar orqali boshlang:"
+        "🎰 *WinWin Bukmekeriga xush kelibsiz!* 🎰\n\n"
+        "🔥 *Premium bonuslar* va har hafta yangi yutuqlar sizni kutmoqda!\n"
+        "📊 *O‘yinlar uchun maxsus yutish strategiyalari* va *signal* xizmati orqali g‘alaba qozonish imkoniyatingizni oshiring.\n\n"
+        "💰 Bu yerda nafaqat o‘ynab, balki *pul ishlashingiz* mumkin:\n"
+        "– Do‘stlaringizni taklif qiling va har bir taklif uchun *2500 so‘m* oling.\n"
+        "– Start bonus sifatida *15000 so‘m* hamyoningizga tushadi.\n\n"
+        "👇 Quyidagi tugmalar orqali imkoniyatlarni kashf eting:"
     )
-    
     await update.message.reply_text(
         text,
         parse_mode="Markdown",
@@ -232,44 +210,18 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     text = (
-        "🎰 *BETWINNER PREMIUM* 🎰\n\n"
-        "✨ *Asosiy menyu* ✨\n\n"
-        "📱 Sport tikish va yutuqlarni qo'lga kiriting.\n\n"
-        "💰 *Pul ishlash imkoniyati:*\n"
-        "• Do'stlaringizni taklif qiling: +2500 so'm\n"
-        "• Start bonus: +15000 so'm\n"
-        "• Minimal yechish: 25000 so'm\n\n"
-        "👇 Kerakli bo'limni tanlang:"
+        "🎰 *WinWin Bukmekeriga xush kelibsiz!* 🎰\n\n"
+        "🔥 *Premium bonuslar* va har hafta yangi yutuqlar sizni kutmoqda!\n"
+        "📊 *O‘yinlar uchun maxsus yutish strategiyalari* va *signal* xizmati orqali g‘alaba qozonish imkoniyatingizni oshiring.\n\n"
+        "💰 Bu yerda nafaqat o‘ynab, balki *pul ishlashingiz* mumkin:\n"
+        "– Do‘stlaringizni taklif qiling va har bir taklif uchun *2500 so‘m* oling.\n"
+        "– Start bonus sifatida *15000 so‘m* hamyoningizga tushadi.\n\n"
+        "👇 Quyidagi tugmalar orqali imkoniyatlarni kashf eting:"
     )
     await query.message.reply_text(
         text,
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
-    )
-
-# ------------------- APK YUKLASH -------------------
-async def download_apk(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """APK yuklash tugmasi bosilganda"""
-    query = update.callback_query
-    await query.answer()
-    
-    # APK havolasi yoki fayl
-    apk_url = "https://betwinner.com/download/app"
-    
-    keyboard = [
-        [InlineKeyboardButton("📥 APK yuklash", url=apk_url)],
-        [InlineKeyboardButton("◀️ Bosh menyu", callback_data="main_menu")]
-    ]
-    
-    await query.edit_message_text(
-        "📱 *Betwinner APK*\n\n"
-        "Eng so'nggi versiyani yuklab oling:\n"
-        "• Android 5.0+\n"
-        "• Hajmi: 45 MB\n"
-        "• Tezkor va xavfsiz\n\n"
-        "👇 Yuklash uchun tugmani bosing:",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 # ------------------- O‘YINLAR -------------------
@@ -278,12 +230,12 @@ async def show_games(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     if not games_data:
         await query.edit_message_text(
-            "Hozircha hech qanday sport o'yinlari mavjud emas.",
+            "Hozircha hech qanday o‘yin mavjud emas.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Bosh menyu", callback_data="main_menu")]])
         )
         return
-    text = "🎮 *Sport o'yinlari:*\n\nQuyidagilardan birini tanlang:"
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_game_keyboard())
+    text = "🎮 Quyidagi oyinlardan birini tanlang va pul ishlashni boshlang:"
+    await query.edit_message_text(text, reply_markup=get_game_keyboard())
 
 async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -306,7 +258,7 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Bosh menyuga qaytish tugmasi
     back_button = [[InlineKeyboardButton("◀️ Bosh menyu", callback_data="main_menu")]]
 
-    # Agar tashqi havola tugmasi bo‘lsa, uni ham qo‘shamiz
+    # Agar tashqi havola tugmasi bo‘lsa, uni ham qo‘shamiz (faqat rasm/matn xabariga)
     reply_markup = None
     if button_text and button_url:
         keyboard = [[InlineKeyboardButton(button_text, url=button_url)], back_button[0]]
@@ -318,7 +270,7 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if file_id:
         await query.message.reply_document(document=file_id)
 
-    # 2. Rasm yoki matnni yuborish
+    # 2. Rasm yoki matnni yuborish (bosh menyu tugmasi bilan)
     if photo_id:
         await query.message.reply_photo(
             photo=photo_id,
@@ -342,18 +294,14 @@ async def earn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     referral_link = get_referral_link(user_id)
     text = (
-        "💰 *Betwinner-da pul ishlash*\n\n"
-        "✅ *Do'stlaringizni taklif qiling:*\n"
-        "Har bir do'stingiz botga kirganda *2500 so'm* olasiz\n\n"
-        "✅ *Start bonusi:*\n"
-        "Botga birinchi marta kirganingizda *15000 so'm*\n\n"
-        "✅ *O'yinlar orqali:*\n"
-        "Sport tikish orqali katta yutuqlarni qo'lga kiriting\n\n"
-        "🔗 *Sizning taklif havolangiz:*\n"
+        "💰 *Qanday qilib pul ishlash mumkin?*\n\n"
+        "Har bir do‘stingizni botga taklif qilganingiz uchun *2500 so‘m* olasiz.\n"
+        "Do‘stingiz botga start bosishi bilan sizning balansingizga bonus tushadi.\n\n"
+        "Sizning referral havolangiz:\n"
         f"`{referral_link}`\n\n"
-        "Havolani do'stlaringizga yuboring va pul ishlang!"
+        "Havolani do‘stlaringizga yuboring yoki quyidagi tugma orqali ulashing."
     )
-    share_url = f"https://t.me/share/url?url={referral_link}&text=Betwinner%20premium%20botiga%20keling%2C%20birga%20pul%20ishlaymiz!"
+    share_url = f"https://t.me/share/url?url={referral_link}&text=Bu%20bot%20orqali%20pul%20ishlash%20mumkin!%20Keling%2C%20birga%20boshlaymiz."
     keyboard = [
         [InlineKeyboardButton("📤 Ulashish", url=share_url)],
         [InlineKeyboardButton("💸 Pul chiqarish", callback_data="withdraw")],
@@ -372,15 +320,11 @@ async def balance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = await ensure_user(user_id)
     balance = user_data.get("balance", 0)
     referrals = user_data.get("referrals", 0)
-    total_earned = user_data.get("total_earned", 0)
-    
     text = (
-        f"💳 *Betwinner balansingiz*\n\n"
-        f"💰 Jami balans: *{balance} so‘m*\n"
-        f"👥 Takliflar: *{referrals} ta*\n"
-        f"📈 Umumiy daromad: *{total_earned} so‘m*\n\n"
-        f"💸 Minimal yechish: *{MIN_WITHDRAW} so‘m*\n\n"
-        f"🔥 Ko'proq pul ishlash uchun do'stlaringizni taklif qiling!"
+        f"💵 *Sizning balansingiz:*\n\n"
+        f"Balans: *{balance} so‘m*\n"
+        f"Taklif qilgan do‘stlaringiz: *{referrals}*\n\n"
+        f"Minimal yechish summasi: {MIN_WITHDRAW} so‘m."
     )
     keyboard = [
         [InlineKeyboardButton("💸 Pul chiqarish", callback_data="withdraw")],
@@ -402,23 +346,17 @@ async def withdraw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if balance < MIN_WITHDRAW:
         await query.edit_message_text(
-            f"❌ Pul chiqarish uchun minimal balans {MIN_WITHDRAW} so‘m.\n"
-            f"Sizda hozir {balance} so‘m bor.\n\n"
-            f"Do'stlaringizni taklif qilib balansingizni oshiring!",
+            f"❌ Pul chiqarish uchun minimal balans {MIN_WITHDRAW} so‘m. Sizda {balance} so‘m bor.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Bosh menyu", callback_data="main_menu")]])
         )
         return
 
     code = user_data.get("withdraw_code")
     text = (
-        f"💸 *Betwinner-dan pul chiqarish*\n\n"
-        f"✅ Sizning maxsus kodingiz: `{code}`\n\n"
-        f"📌 *Qanday yechish:*\n"
-        f"1. Quyidagi tugma orqali saytga o'ting\n"
-        f"2. Kodingizni kiriting\n"
-        f"3. Summani tanlang\n"
-        f"4. To'lovni tasdiqlang\n\n"
-        f"⏳ Pul 5-10 daqiqada hisobingizga tushadi!"
+        f"💸 *Pul chiqarish*\n\n"
+        f"Sizning maxsus 7 xonali kodingiz: `{code}`\n"
+        f"Pul yechish uchun quyidagi tugma orqali saytga o‘ting va kodni kiriting.\n\n"
+        f"Saytda kodni kiritib, pul yechishni tasdiqlang."
     )
     keyboard = [
         [InlineKeyboardButton("💳 Saytga o‘tish", url=WITHDRAW_SITE_URL)],
@@ -430,23 +368,19 @@ async def withdraw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ------------------- ADMIN PANEL -------------------
+# ------------------- ADMIN PANEL (umumiy callbacklar) -------------------
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Siz admin emassiz.")
+        await update.message.reply_text("Siz admin emassiz.")
         return
-    await update.message.reply_text(
-        "👨‍💻 *Betwinner Admin Panel*",
-        parse_mode="Markdown",
-        reply_markup=get_admin_keyboard()
-    )
+    await update.message.reply_text("👨‍💻 Admin paneli:", reply_markup=get_admin_keyboard())
 
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin panelidagi callbacklarni boshqaradi"""
+    """Admin panelidagi callbacklarni boshqaradi (add va edit opsiyalaridan tashqari)."""
     query = update.callback_query
     await query.answer()
     if not is_admin(query.from_user.id):
-        await query.edit_message_text("❌ Siz admin emassiz.")
+        await query.edit_message_text("Siz admin emassiz.")
         return
 
     data = query.data
@@ -470,40 +404,23 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
 
     elif data == "admin_stats":
-        total_users = len(users_data)
-        total_balance = sum(u.get("balance", 0) for u in users_data.values())
-        total_earned = sum(u.get("total_earned", 0) for u in users_data.values())
-        total_referrals = sum(u.get("referrals", 0) for u in users_data.values())
-        
-        lines = [
-            "📊 *Betwinner Statistikasi*\n",
-            f"👥 Foydalanuvchilar: *{total_users}*",
-            f"💰 Jami balans: *{total_balance} so‘m*",
-            f"📈 Umumiy daromad: *{total_earned} so‘m*",
-            f"👥 Jami takliflar: *{total_referrals}*",
-            f"🎮 O'yinlar: *{len(games_data)}*",
-            "\n*O'yinlar statistikasi:*"
-        ]
-        
+        if not games_data:
+            await query.edit_message_text("Statistika uchun maʼlumot yo‘q.")
+            return
+        lines = ["📊 Statistika:"]
+        total = 0
         for name, game in games_data.items():
             views = game.get("views", 0)
-            lines.append(f"• {name}: {views} marta")
-        
-        await query.edit_message_text(
-            "\n".join(lines),
-            parse_mode="Markdown",
-            reply_markup=get_admin_keyboard()
-        )
+            lines.append(f"• {name}: {views} marta ko‘rilgan")
+            total += views
+        lines.append(f"\nJami: {total} marta")
+        await query.edit_message_text("\n".join(lines), reply_markup=get_admin_keyboard())
 
     elif data == "admin_close":
-        await query.edit_message_text("✅ Admin panel yopildi.")
+        await query.edit_message_text("Panel yopildi.")
 
     elif data == "admin_back":
-        await query.edit_message_text(
-            "👨‍💻 *Betwinner Admin Panel*",
-            parse_mode="Markdown",
-            reply_markup=get_admin_keyboard()
-        )
+        await query.edit_message_text("Admin paneli:", reply_markup=get_admin_keyboard())
 
     elif data.startswith("remove_"):
         game_name = data.replace("remove_", "")
@@ -531,17 +448,17 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     elif data.startswith("edit_"):
         game_name = data.replace("edit_", "")
+        # O‘yin nomini saqlash (keyingi conversation uchun)
         context.user_data["edit_game"] = game_name
         keyboard = [
             [InlineKeyboardButton("✏️ Matn", callback_data=f"edit_text_{game_name}")],
             [InlineKeyboardButton("🖼 Rasm", callback_data=f"edit_photo_{game_name}")],
             [InlineKeyboardButton("📁 Fayl (APK)", callback_data=f"edit_file_{game_name}")],
             [InlineKeyboardButton("🔗 Tugma", callback_data=f"edit_button_{game_name}")],
-            [InlineKeyboardButton("◀️ Orqaga", callback_data="admin_back")]
+            [InlineKeyboardButton("◀️ Back", callback_data="admin_back")]
         ]
         await query.edit_message_text(
-            f"✏️ *{game_name}* – nimani tahrirlaysiz?",
-            parse_mode="Markdown",
+            f"'{game_name}' – nimani tahrirlaysiz?",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -558,26 +475,27 @@ async def admin_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("Siz admin emassiz.")
         return ConversationHandler.END
 
+    # Avvalgi conversation ma'lumotlarini tozalash
     context.user_data.clear()
     context.user_data["add_game"] = {}
-    await query.edit_message_text("➕ *Yangi sport o'yini qo'shish*\n\nO'yin nomini kiriting:", parse_mode="Markdown")
+    await query.edit_message_text("Yangi o‘yin nomini kiriting:")
     return ADD_NAME
 
 async def add_game_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         name = update.message.text.strip()
         if not name:
-            await update.message.reply_text("❌ Nom bo‘sh bo‘lishi mumkin emas. Qayta kiriting:")
+            await update.message.reply_text("Nom bo‘sh bo‘lishi mumkin emas. Qayta kiriting:")
             return ADD_NAME
         if name in games_data:
-            await update.message.reply_text("❌ Bu nom allaqachon mavjud. Boshqa nom kiriting:")
+            await update.message.reply_text("Bu nom allaqachon mavjud. Boshqa nom kiriting:")
             return ADD_NAME
         context.user_data["add_game"]["name"] = name
-        await update.message.reply_text("✅ Endi o'yin matnini kiriting (HTML teglar bilan):")
+        await update.message.reply_text("Endi o‘yin matnini kiriting (HTML teglar bilan):")
         return ADD_TEXT
     except Exception as e:
         logger.error(f"add_game_name xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi. Qaytadan urinib ko‘ring.")
+        await update.message.reply_text("Xatolik yuz berdi. Qaytadan urinib ko‘ring.")
         return ConversationHandler.END
 
 async def add_game_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -585,12 +503,12 @@ async def add_game_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text
         context.user_data["add_game"]["text"] = text
         await update.message.reply_text(
-            "✅ Matn saqlandi.\n\nEndi rasm yuboring (ixtiyoriy) yoki /skip ni bosing."
+            "Matn saqlandi. Endi rasm yuboring (ixtiyoriy) yoki /skip ni bosing."
         )
         return ADD_PHOTO
     except Exception as e:
         logger.error(f"add_game_text xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def add_game_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -598,24 +516,24 @@ async def add_game_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.photo:
             photo_id = update.message.photo[-1].file_id
             context.user_data["add_game"]["photo_id"] = photo_id
-            await update.message.reply_text("✅ Rasm saqlandi.\n\nEndi APK fayl yuboring (ixtiyoriy) yoki /skip ni bosing.")
+            await update.message.reply_text("Rasm saqlandi. Endi fayl (APK) yuboring (ixtiyoriy) yoki /skip ni bosing.")
         else:
-            await update.message.reply_text("❌ Iltimos, rasm yuboring yoki /skip ni bosing.")
+            await update.message.reply_text("Iltimos, rasm yuboring yoki /skip ni bosing.")
             return ADD_PHOTO
         return ADD_FILE
     except Exception as e:
         logger.error(f"add_game_photo xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def add_game_photo_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data["add_game"]["photo_id"] = None
-        await update.message.reply_text("⏭ Rasm o‘tkazib yuborildi.\n\nEndi APK fayl yuboring (ixtiyoriy) yoki /skip ni bosing.")
+        await update.message.reply_text("Rasm o‘tkazib yuborildi. Endi fayl (APK) yuboring (ixtiyoriy) yoki /skip ni bosing.")
         return ADD_FILE
     except Exception as e:
         logger.error(f"add_game_photo_skip xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def add_game_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -626,26 +544,26 @@ async def add_game_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             context.user_data["add_game"]["file_id"] = None
         await update.message.reply_text(
-            "✅ Fayl saqlandi.\n\nEndi tugma matnini kiriting (ixtiyoriy) yoki /skip ni bosing.\n"
-            "Masalan: '🎮 Tikish qilish'"
+            "Fayl saqlandi. Endi tugma matnini kiriting (ixtiyoriy) yoki /skip ni bosing.\n"
+            "Masalan: '🎮 O‘yin sayti'"
         )
         return ADD_BUTTON_TEXT
     except Exception as e:
         logger.error(f"add_game_file xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def add_game_file_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data["add_game"]["file_id"] = None
         await update.message.reply_text(
-            "⏭ Fayl o‘tkazib yuborildi.\n\nEndi tugma matnini kiriting (ixtiyoriy) yoki /skip ni bosing.\n"
-            "Masalan: '🎮 Tikish qilish'"
+            "Fayl o‘tkazib yuborildi. Endi tugma matnini kiriting (ixtiyoriy) yoki /skip ni bosing.\n"
+            "Masalan: '🎮 O‘yin sayti'"
         )
         return ADD_BUTTON_TEXT
     except Exception as e:
         logger.error(f"add_game_file_skip xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def add_game_button_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -653,34 +571,30 @@ async def add_game_button_text(update: Update, context: ContextTypes.DEFAULT_TYP
         button_text = update.message.text.strip()
         context.user_data["add_game"]["button_text"] = button_text
         await update.message.reply_text(
-            "✅ Tugma matni saqlandi.\n\nEndi tugma havolasini (URL) kiriting (ixtiyoriy) yoki /skip ni bosing.\n"
-            "Masalan: https://betwinner.com/game"
+            "Tugma matni saqlandi. Endi tugma havolasini (URL) kiriting (ixtiyoriy) yoki /skip ni bosing.\n"
+            "Masalan: https://example.com"
         )
         return ADD_BUTTON_URL
     except Exception as e:
         logger.error(f"add_game_button_text xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def add_game_button_text_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data["add_game"]["button_text"] = None
         await update.message.reply_text(
-            "⏭ Tugma matni o‘tkazib yuborildi.\n\nEndi tugma havolasini (URL) kiriting (ixtiyoriy) yoki /skip ni bosing."
+            "Tugma matni o‘tkazib yuborildi. Endi tugma havolasini (URL) kiriting (ixtiyoriy) yoki /skip ni bosing."
         )
         return ADD_BUTTON_URL
     except Exception as e:
         logger.error(f"add_game_button_text_skip xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def add_game_button_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         button_url = update.message.text.strip()
-        if not button_url.startswith(('http://', 'https://')):
-            await update.message.reply_text("❌ URL 'http://' yoki 'https://' bilan boshlanishi kerak. Qayta kiriting:")
-            return ADD_BUTTON_URL
-            
         context.user_data["add_game"]["button_url"] = button_url
         # Saqlash
         game_data = context.user_data["add_game"]
@@ -694,15 +608,14 @@ async def add_game_button_url(update: Update, context: ContextTypes.DEFAULT_TYPE
         }
         save_games(games_data)
         await update.message.reply_text(
-            f"✅ *{game_data['name']}* o‘yini muvaffaqiyatli qo‘shildi!",
-            parse_mode="Markdown",
+            f"✅ '{game_data['name']}' o‘yini qo‘shildi!",
             reply_markup=get_admin_keyboard()
         )
         context.user_data.pop("add_game", None)
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"add_game_button_url xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def add_game_button_url_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -719,41 +632,45 @@ async def add_game_button_url_skip(update: Update, context: ContextTypes.DEFAULT
         }
         save_games(games_data)
         await update.message.reply_text(
-            f"✅ *{game_data['name']}* o‘yini muvaffaqiyatli qo‘shildi!",
-            parse_mode="Markdown",
+            f"✅ '{game_data['name']}' o‘yini qo‘shildi!",
             reply_markup=get_admin_keyboard()
         )
         context.user_data.pop("add_game", None)
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"add_game_button_url_skip xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def add_game_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("🚫 Qo‘shish bekor qilindi.", reply_markup=get_admin_keyboard())
+    await update.message.reply_text("Qo‘shish bekor qilindi.", reply_markup=get_admin_keyboard())
     return ConversationHandler.END
 
 # ------------------- EDIT GAME KONVERSATSIYALARI -------------------
 EDIT_ACTION, EDIT_TEXT, EDIT_PHOTO, EDIT_FILE, EDIT_BUTTON_TEXT, EDIT_BUTTON_URL = range(6, 12)
 
+# Matn tahrirlash
 async def edit_text_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    # callback_data dan o'yin nomini olish (format: edit_text_GameName)
     data = query.data
     if data.startswith("edit_text_"):
         game_name = data.replace("edit_text_", "")
     else:
+        # fallback
         game_name = context.user_data.get("edit_game")
         if not game_name:
             await query.edit_message_text("Xatolik: o'yin nomi topilmadi.")
             return ConversationHandler.END
+    # Avvalgi conversation ma'lumotlarini tozalash
     context.user_data.clear()
     context.user_data["edit_game"] = game_name
-    await query.edit_message_text(f"✏️ *{game_name}* uchun yangi matnni kiriting:", parse_mode="Markdown")
+    await query.edit_message_text("Yangi matnni kiriting (HTML teglar bilan):")
     return EDIT_TEXT
 
+# Rasm tahrirlash
 async def edit_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -767,9 +684,10 @@ async def edit_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             return ConversationHandler.END
     context.user_data.clear()
     context.user_data["edit_game"] = game_name
-    await query.edit_message_text(f"🖼 *{game_name}* uchun yangi rasm yuboring:", parse_mode="Markdown")
+    await query.edit_message_text("Yangi rasmni yuboring (reply orqali):")
     return EDIT_PHOTO
 
+# Fayl tahrirlash
 async def edit_file_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -783,9 +701,10 @@ async def edit_file_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return ConversationHandler.END
     context.user_data.clear()
     context.user_data["edit_game"] = game_name
-    await query.edit_message_text(f"📁 *{game_name}* uchun yangi APK fayl yuboring:", parse_mode="Markdown")
+    await query.edit_message_text("Yangi faylni (APK) yuboring (reply orqali):")
     return EDIT_FILE
 
+# Tugma tahrirlash
 async def edit_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -799,24 +718,22 @@ async def edit_button_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             return ConversationHandler.END
     context.user_data.clear()
     context.user_data["edit_game"] = game_name
-    await query.edit_message_text(f"🔗 *{game_name}* uchun yangi tugma matnini kiriting:", parse_mode="Markdown")
+    await query.edit_message_text("Yangi tugma matnini kiriting (ixtiyoriy, /skip):")
     return EDIT_BUTTON_TEXT
 
+# Edit qilish uchun qolgan funksiyalar
 async def edit_game_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         game_name = context.user_data["edit_game"]
         new_text = update.message.text
         games_data[game_name]["text"] = new_text
         save_games(games_data)
-        await update.message.reply_text(
-            f"✅ Matn yangilandi.",
-            reply_markup=get_admin_keyboard()
-        )
+        await update.message.reply_text(f"✅ Matn yangilandi.", reply_markup=get_admin_keyboard())
         context.user_data.clear()
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"edit_game_text xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def edit_game_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -826,18 +743,15 @@ async def edit_game_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             game_name = context.user_data["edit_game"]
             games_data[game_name]["photo_id"] = photo_id
             save_games(games_data)
-            await update.message.reply_text(
-                f"✅ Rasm yangilandi.",
-                reply_markup=get_admin_keyboard()
-            )
+            await update.message.reply_text(f"✅ Rasm yangilandi.", reply_markup=get_admin_keyboard())
             context.user_data.clear()
             return ConversationHandler.END
         else:
-            await update.message.reply_text("❌ Iltimos, rasm yuboring.")
+            await update.message.reply_text("Iltimos, rasm yuboring.")
             return EDIT_PHOTO
     except Exception as e:
         logger.error(f"edit_game_photo xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def edit_game_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -847,64 +761,55 @@ async def edit_game_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             game_name = context.user_data["edit_game"]
             games_data[game_name]["file_id"] = file_id
             save_games(games_data)
-            await update.message.reply_text(
-                f"✅ Fayl yangilandi.",
-                reply_markup=get_admin_keyboard()
-            )
+            await update.message.reply_text(f"✅ Fayl yangilandi.", reply_markup=get_admin_keyboard())
             context.user_data.clear()
             return ConversationHandler.END
         else:
-            await update.message.reply_text("❌ Iltimos, fayl yuboring.")
+            await update.message.reply_text("Iltimos, fayl yuboring.")
             return EDIT_FILE
     except Exception as e:
         logger.error(f"edit_game_file xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
+# Tugma matn va URL ni tahrirlash
 async def edit_button_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         button_text = update.message.text.strip()
         context.user_data["edit_button_text"] = button_text
         await update.message.reply_text(
-            "✅ Tugma matni saqlandi.\n\nEndi tugma havolasini (URL) kiriting (ixtiyoriy, /skip):"
+            "Tugma matni saqlandi. Endi tugma havolasini (URL) kiriting (ixtiyoriy, /skip):"
         )
         return EDIT_BUTTON_URL
     except Exception as e:
         logger.error(f"edit_button_text xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def edit_button_text_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data["edit_button_text"] = None
-        await update.message.reply_text("⏭ Tugma matni o‘tkazib yuborildi.\n\nEndi tugma havolasini (URL) kiriting (ixtiyoriy, /skip):")
+        await update.message.reply_text("Tugma matni o‘tkazib yuborildi. Endi tugma havolasini (URL) kiriting (ixtiyoriy, /skip):")
         return EDIT_BUTTON_URL
     except Exception as e:
         logger.error(f"edit_button_text_skip xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def edit_button_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         button_url = update.message.text.strip()
-        if not button_url.startswith(('http://', 'https://')):
-            await update.message.reply_text("❌ URL 'http://' yoki 'https://' bilan boshlanishi kerak. Qayta kiriting:")
-            return EDIT_BUTTON_URL
-            
         game_name = context.user_data["edit_game"]
         button_text = context.user_data.get("edit_button_text")
         games_data[game_name]["button_text"] = button_text
         games_data[game_name]["button_url"] = button_url
         save_games(games_data)
-        await update.message.reply_text(
-            f"✅ Tugma maʼlumotlari yangilandi.",
-            reply_markup=get_admin_keyboard()
-        )
+        await update.message.reply_text(f"✅ Tugma maʼlumotlari yangilandi.", reply_markup=get_admin_keyboard())
         context.user_data.clear()
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"edit_button_url xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def edit_button_url_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -914,20 +819,17 @@ async def edit_button_url_skip(update: Update, context: ContextTypes.DEFAULT_TYP
         games_data[game_name]["button_text"] = button_text
         games_data[game_name]["button_url"] = None
         save_games(games_data)
-        await update.message.reply_text(
-            f"✅ Tugma maʼlumotlari yangilandi.",
-            reply_markup=get_admin_keyboard()
-        )
+        await update.message.reply_text(f"✅ Tugma maʼlumotlari yangilandi (faqat matn, havolasiz).", reply_markup=get_admin_keyboard())
         context.user_data.clear()
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"edit_button_url_skip xatosi: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.message.reply_text("Xatolik yuz berdi.")
         return ConversationHandler.END
 
 async def edit_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("🚫 Tahrirlash bekor qilindi.", reply_markup=get_admin_keyboard())
+    await update.message.reply_text("Tahrirlash bekor qilindi.", reply_markup=get_admin_keyboard())
     return ConversationHandler.END
 
 # ------------------- ASOSIY -------------------
@@ -941,10 +843,9 @@ def main():
     app.add_handler(CallbackQueryHandler(earn_callback, pattern="^earn$"))
     app.add_handler(CallbackQueryHandler(balance_callback, pattern="^balance$"))
     app.add_handler(CallbackQueryHandler(withdraw_callback, pattern="^withdraw$"))
-    app.add_handler(CallbackQueryHandler(download_apk, pattern="^download_apk$"))
     app.add_handler(CallbackQueryHandler(back_to_main, pattern="^main_menu$"))
 
-    # Admin panel
+    # Admin panel (umumiy callbacklar)
     app.add_handler(CallbackQueryHandler(
         admin_callback_handler,
         pattern="^(admin_remove_list|admin_edit_list|admin_stats|admin_close|admin_back|remove_|confirm_remove)$"
@@ -979,6 +880,7 @@ def main():
     app.add_handler(add_conv)
 
     # EDIT GAME conversations
+    # Matn
     edit_text_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(edit_text_callback, pattern="^edit_text_")],
         states={
@@ -988,6 +890,7 @@ def main():
     )
     app.add_handler(edit_text_conv)
 
+    # Rasm
     edit_photo_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(edit_photo_callback, pattern="^edit_photo_")],
         states={
@@ -997,6 +900,7 @@ def main():
     )
     app.add_handler(edit_photo_conv)
 
+    # Fayl
     edit_file_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(edit_file_callback, pattern="^edit_file_")],
         states={
@@ -1006,6 +910,7 @@ def main():
     )
     app.add_handler(edit_file_conv)
 
+    # Tugma (button)
     edit_button_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(edit_button_callback, pattern="^edit_button_")],
         states={
@@ -1022,7 +927,7 @@ def main():
     )
     app.add_handler(edit_button_conv)
 
-    logger.info("🤖 Betwinner Premium Bot ishga tushdi...")
+    logger.info("Bot ishga tushdi...")
     app.run_polling()
 
 if __name__ == "__main__":
